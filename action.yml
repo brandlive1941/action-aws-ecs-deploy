@@ -1,0 +1,66 @@
+name: 'action-aws-ecs-deploy'
+description: 'Configures AWS, renders Task Definition, and deploys to ECS for a single service/region combination.'
+
+inputs:
+  task-definition:
+    description: 'The task definition file path (e.g., .aws/sandbox-us-west-2-translation-service.json)'
+    required: true
+  container-name:
+    description: 'The name of the container in the task definition to update (e.g., sandbox-translation-service-container)'
+    required: true
+  region:
+    description: 'The AWS region to deploy to'
+    required: true
+  service:
+    description: 'The name of the service to deploy (e.g., translation-service)'
+    required: true
+  cluster:
+    description: 'The name of the ECS cluster to deploy to (e.g., platform-sandbox-us-west-2)'
+    required: true
+  role:
+    description: 'The IAM Role ARN to assume for deployment'
+    required: true
+  image:
+    description: 'The ECR image URL (e.g., 123456789012.dkr.ecr.us-west-2.amazonaws.com/my-image:latest)'
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+    - name: Checkout Code
+      uses: actions/checkout@v5
+
+    - name: Job Info
+      shell: bash
+      run: |
+        echo "Deploying to ${{ inputs.environment }} in region ${{ inputs.region }} for service ${{ inputs.service }} with role ${{ inputs.role }} using image tag ${{ inputs.image_tag }}"
+
+    - name: Configure AWS Credentials
+      uses: aws-actions/configure-aws-credentials@v3
+      with:
+        role-to-assume: ${{ inputs.role }}
+        role-session-name: github-action-session-deploy
+        aws-region: ${{ inputs.region }}
+
+    - name: Fill in the new image ID in the Amazon ECS task definition
+      id: task-def
+      uses: aws-actions/amazon-ecs-render-task-definition@v1
+      with:
+        # Construct the task definition path using inputs
+        task-definition: ${{ inputs.task-definition }}
+        # Construct the container name using inputs
+        container-name: ${{ inputs.container-name }}
+        # Construct the full image URL using inputs
+        image: ${{ inputs.image }}
+      shell: bash
+
+    - name: Deploy Amazon ECS task definition
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+      with:
+        task-definition: ${{ steps.task-def.outputs.task-definition }}
+        # Construct the service name using inputs
+        service: ${{ inputs.service }}
+        # Construct the cluster name using inputs
+        cluster: ${{ inputs.cluster }}
+        wait-for-service-stability: true
+      shell: bash
