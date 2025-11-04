@@ -29,11 +29,19 @@ Add the following step to your GitHub Actions workflow:
 
 | Name                   | Description                        | Required |
 |------------------------|------------------------------------|----------|
-| `aws-access-key-id`    | AWS access key ID                  | Yes      |
-| `aws-secret-access-key`| AWS secret access key              | Yes      |
-| `cluster`              | ECS cluster name                   | Yes      |
-| `service`              | ECS service name                   | Yes      |
-| `image`                | Docker image to deploy             | Yes      |
+| `task-definition`      | Task Definition json               |
+Yes
+| `container-name`       | Container Name in Task             |
+Yes
+| `region`               | AWS Region to deploy to            |
+Yes           
+| `cluster`              | ECS cluster name                   | Yes      
+| `service`              | ECS service name                   | 
+Yes
+| `image`                | Docker image to deploy.            | 
+Yes
+| `role`                 | IAM deployment role                |
+Yes
 
 ## License
 
