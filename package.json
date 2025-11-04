@@ -46,6 +46,7 @@
     }
   },
   "dependencies": {
-    "commitizen": "^4.3.0"
+    "commitizen": "^4.3.0",
+    "cz": "^1.8.2"
   }
 }
