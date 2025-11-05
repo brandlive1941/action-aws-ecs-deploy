@@ -55,7 +55,7 @@ runs:
     - id: deploy
       uses: aws-actions/amazon-ecs-deploy-task-definition@v2
       with:
-        task-definition: ${{ steps.task-def.outputs.task-definition }}
+        task-definition: ${{ inputs.task-definition }}
         # Construct the service name using inputs
         service: ${{ inputs.service }}
         # Construct the cluster name using inputs
