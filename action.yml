@@ -33,7 +33,12 @@ runs:
     - id: job_info
       shell: bash
       run: |
-        echo "Deploying to ${{ inputs.cluster }} in region ${{ inputs.region }} for service ${{ inputs.service }} with role ${{ inputs.role }} using image tag ${{ inputs.image }}"
+        echo "Deploying to ${{ inputs.cluster }}"
+        echo "Region ${{ inputs.region }}"
+        echo "Service ${{ inputs.service }}"
+        echo "Role ${{ inputs.role }}"
+        echo "Image ${{ inputs.image }}"
+        echo "Container Name ${{ inputs.container-name }}"
 
     - id: configure_aws_credentials
       uses: aws-actions/configure-aws-credentials@v3
