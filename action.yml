@@ -17,33 +17,37 @@ inputs:
   cluster:
     description: 'The name of the ECS cluster to deploy to (e.g., platform-sandbox-us-west-2)'
     required: true
-  role:
-    description: 'The IAM Role ARN to assume for deployment'
-    required: true
   image:
     description: 'The ECR image URL (e.g., 123456789012.dkr.ecr.us-west-2.amazonaws.com/my-image:latest)'
+    required: true
+  role:
+    description: 'The IAM Role ARN to assume for deployment'
     required: true
 
 runs:
   using: "composite"
   steps:
-    - name: Checkout Code
+    - id: checkout_cod
       uses: actions/checkout@v5
 
-    - name: Job Info
+    - id: job_info
       shell: bash
       run: |
-        echo "Deploying to ${{ inputs.environment }} in region ${{ inputs.region }} for service ${{ inputs.service }} with role ${{ inputs.role }} using image tag ${{ inputs.image_tag }}"
+        echo "Deploying to ${{ inputs.cluster }}"
+        echo "Region ${{ inputs.region }}"
+        echo "Service ${{ inputs.service }}"
+        echo "Role ${{ inputs.role }}"
+        echo "Image ${{ inputs.image }}"
+        echo "Container Name ${{ inputs.container-name }}"
 
-    - name: Configure AWS Credentials
+    - id: configure_aws_credentials
       uses: aws-actions/configure-aws-credentials@v3
       with:
         role-to-assume: ${{ inputs.role }}
         role-session-name: github-action-session-deploy
         aws-region: ${{ inputs.region }}
 
-    - name: Fill in the new image ID in the Amazon ECS task definition
-      id: task-def
+    - id: task-def
       uses: aws-actions/amazon-ecs-render-task-definition@v1
       with:
         # Construct the task definition path using inputs
@@ -52,15 +56,13 @@ runs:
         container-name: ${{ inputs.container-name }}
         # Construct the full image URL using inputs
         image: ${{ inputs.image }}
-      shell: bash
 
-    - name: Deploy Amazon ECS task definition
+    - id: deploy
       uses: aws-actions/amazon-ecs-deploy-task-definition@v2
       with:
-        task-definition: ${{ steps.task-def.outputs.task-definition }}
+        task-definition: ${{ inputs.task-definition }}
         # Construct the service name using inputs
         service: ${{ inputs.service }}
         # Construct the cluster name using inputs
         cluster: ${{ inputs.cluster }}
         wait-for-service-stability: true
-      shell: bash
