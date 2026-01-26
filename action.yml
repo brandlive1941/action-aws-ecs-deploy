@@ -8,6 +8,10 @@ inputs:
   container-name:
     description: 'The name of the container in the task definition to update (e.g., sandbox-translation-service-container)'
     required: true
+  container_port:
+    description: 'The port on the container to associate with the load balancer (e.g., 8080)'
+    required: false # Making false to not break existing calls if any
+    default: '80'
   region:
     description: 'The AWS region to deploy to'
     required: true
@@ -23,6 +27,32 @@ inputs:
   role:
     description: 'The IAM Role ARN to assume for deployment'
     required: true
+  create_service:
+    description: 'Set to true to create the service if it does not exist'
+    required: false
+    default: 'false'
+  launch_type: 
+    description: 'The launch type to use for the service, used only when creating a new service'
+    required: false
+    default: 'FARGATE'
+  desired_count: 
+    description: 'The desired count for the service, used only when creating a new service'
+    required: false
+    default: '0'
+  subnets:
+    description: 'The subnets to use for the service, used only when creating a new service'
+    required: false
+    default: '[]'
+  security_groups:
+    description: 'The security groups to use for the service, used only when creating a new service'
+    required: false
+    default: '[]' 
+  target_group:
+    description: 'The target group ARN to use for the service, used only when creating a new service'
+    required: false
+  environment:
+    description: 'The environment name (e.g., sandbox, dev, qa)'
+    required: false # Making false to not break existing calls, but needed for fetching config
 
 runs:
   using: "composite"
@@ -57,10 +87,71 @@ runs:
         # Construct the full image URL using inputs
         image: ${{ inputs.image }}
 
+    - id: fetch-config
+      if: ${{ inputs.create_service == 'true' }}
+      shell: bash
+      run: |
+        # Fetch Subnets and Security Groups from SSM
+        SUBNET_A=$(aws ssm get-parameter --name /${{ inputs.environment }}/SUBNET_A --query Parameter.Value --output text)
+        SUBNET_B=$(aws ssm get-parameter --name /${{ inputs.environment }}/SUBNET_B --query Parameter.Value --output text)
+        SUBNET_C=$(aws ssm get-parameter --name /${{ inputs.environment }}/SUBNET_C --query Parameter.Value --output text)
+        SECURITY_GROUP=$(aws ssm get-parameter --name /${{ inputs.environment }}/SECURITY_GROUP --query Parameter.Value --output text)
+        echo "subnets=[$SUBNET_A,$SUBNET_B,$SUBNET_C]" >> $GITHUB_OUTPUT
+        echo "security_groups=[$SECURITY_GROUP]" >> $GITHUB_OUTPUT
+
+        # Fetch Target Group ARN
+        TG_NAME="${{ inputs.environment }}-${{ inputs.container-name }}"
+        TG_ARN=$(aws elbv2 describe-target-groups --names "$TG_NAME" --query 'TargetGroups[0].TargetGroupArn' --output text || echo "")
+        echo "target_group=$TG_ARN" >> $GITHUB_OUTPUT
+
+        # Extract Container Port
+        # Using the output task definition from the previous step which is the rendered one
+        CONTAINER_PORT=$(jq -r --arg CONTAINER "${{ inputs.container-name }}" '.containerDefinitions[] | select(.name == $CONTAINER) | .portMappings[0].containerPort' ${{ steps.task-def.outputs.task-definition }})
+        # If extraction failed or empty (e.g. no port mappings), default to 80 or input default?
+        # Inputs default is 80.
+        if [ -z "$CONTAINER_PORT" ] || [ "$CONTAINER_PORT" == "null" ]; then
+           CONTAINER_PORT="${{ inputs.container_port }}"
+        fi
+        echo "container_port=$CONTAINER_PORT" >> $GITHUB_OUTPUT
+
+    - id: create_service
+      if: ${{ inputs.create_service == 'true' }}
+      shell: bash
+      run: |
+        TARGET_GROUP="${{ steps.fetch-config.outputs.target_group }}"
+        CONTAINER_PORT="${{ steps.fetch-config.outputs.container_port }}"
+        SUBNETS="${{ steps.fetch-config.outputs.subnets }}"
+        SECURITY_GROUPS="${{ steps.fetch-config.outputs.security_groups }}"
+        
+        # Fallback to inputs if fetching failed or environment not provided (though subnets likely fail if env missing)
+        if [ -z "$SUBNETS" ]; then SUBNETS="${{ inputs.subnets }}"; fi
+        if [ -z "$SECURITY_GROUPS" ]; then SECURITY_GROUPS="${{ inputs.security_groups }}"; fi
+        # If target group was not found dynamically, check input
+        if [ -z "$TARGET_GROUP" ]; then TARGET_GROUP="${{ inputs.target_group }}"; fi
+
+        if [ -z "$TARGET_GROUP" ] || [ "$TARGET_GROUP" == "[]" ]; then
+          aws ecs create-service \
+            --cluster ${{ inputs.cluster }} \
+            --service-name ${{ inputs.service }} \
+            --task-definition ${{ steps.task-def.outputs.task-definition }} \
+            --desired-count ${{ inputs.desired_count }} \
+            --launch-type ${{ inputs.launch_type }} \
+            --network-configuration "awsvpcConfiguration={subnets=$SUBNETS,securityGroups=$SECURITY_GROUPS,assignPublicIp=DISABLED}"
+        else
+          aws ecs create-service \
+            --cluster ${{ inputs.cluster }} \
+            --service-name ${{ inputs.service }} \
+            --task-definition ${{ steps.task-def.outputs.task-definition }} \
+            --desired-count ${{ inputs.desired_count }} \
+            --launch-type ${{ inputs.launch_type }} \
+            --network-configuration "awsvpcConfiguration={subnets=$SUBNETS,securityGroups=$SECURITY_GROUPS,assignPublicIp=DISABLED}" \
+            --load-balancers "targetGroupArn=$TARGET_GROUP,containerName=${{ inputs.container-name }},containerPort=$CONTAINER_PORT"
+        fi
+
     - id: deploy
       uses: aws-actions/amazon-ecs-deploy-task-definition@v2
       with:
-        task-definition: ${{ inputs.task-definition }}
+        task-definition: ${{ steps.task-def.outputs.task-definition }}
         # Construct the service name using inputs
         service: ${{ inputs.service }}
         # Construct the cluster name using inputs
