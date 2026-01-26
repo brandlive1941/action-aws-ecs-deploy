@@ -147,6 +147,7 @@ runs:
             --network-configuration "awsvpcConfiguration={subnets=$SUBNETS,securityGroups=$SECURITY_GROUPS,assignPublicIp=DISABLED}" \
             --load-balancers "targetGroupArn=$TARGET_GROUP,containerName=${{ inputs.container-name }},containerPort=$CONTAINER_PORT"
         fi
+        ls -al ${{ steps.task-def.outputs.task-definition }}
 
     - id: deploy
       uses: aws-actions/amazon-ecs-deploy-task-definition@v2
