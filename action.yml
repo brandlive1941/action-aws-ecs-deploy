@@ -123,6 +123,7 @@ runs:
         SUBNETS="${{ steps.fetch-config.outputs.subnets }}"
         SECURITY_GROUPS="${{ steps.fetch-config.outputs.security_groups }}"
         
+        ls -al ${{ steps.task-def.outputs.task-definition }}
         # Fallback to inputs if fetching failed or environment not provided (though subnets likely fail if env missing)
         if [ -z "$SUBNETS" ]; then SUBNETS="${{ inputs.subnets }}"; fi
         if [ -z "$SECURITY_GROUPS" ]; then SECURITY_GROUPS="${{ inputs.security_groups }}"; fi
@@ -147,7 +148,6 @@ runs:
             --network-configuration "awsvpcConfiguration={subnets=$SUBNETS,securityGroups=$SECURITY_GROUPS,assignPublicIp=DISABLED}" \
             --load-balancers "targetGroupArn=$TARGET_GROUP,containerName=${{ inputs.container-name }},containerPort=$CONTAINER_PORT"
         fi
-        ls -al ${{ steps.task-def.outputs.task-definition }}
 
     - id: deploy
       uses: aws-actions/amazon-ecs-deploy-task-definition@v2
