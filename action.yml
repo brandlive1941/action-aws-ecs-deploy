@@ -123,18 +123,21 @@ runs:
         SUBNETS="${{ steps.fetch-config.outputs.subnets }}"
         SECURITY_GROUPS="${{ steps.fetch-config.outputs.security_groups }}"
         
-        ls -al ${{ steps.task-def.outputs.task-definition }}
-        # Fallback to inputs if fetching failed or environment not provided (though subnets likely fail if env missing)
+        # Fallback to inputs if fetching failed or environment not provided
         if [ -z "$SUBNETS" ]; then SUBNETS="${{ inputs.subnets }}"; fi
         if [ -z "$SECURITY_GROUPS" ]; then SECURITY_GROUPS="${{ inputs.security_groups }}"; fi
-        # If target group was not found dynamically, check input
         if [ -z "$TARGET_GROUP" ]; then TARGET_GROUP="${{ inputs.target_group }}"; fi
 
-        if [ -z "$TARGET_GROUP" ] || [ "$TARGET_GROUP" == "[]" ]; then
+        # Register the task definition to get an ARN
+        echo "Registering task definition..."
+        TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json "file://${{ steps.task-def.outputs.task-definition }}" --query 'taskDefinition.taskDefinitionArn' --output text)
+        echo "Registered Task Definition ARN: $TASK_DEF_ARN"
+
+        if [ -z "$TARGET_GROUP" ] || [ "$TARGET_GROUP" == "[]" ] || [ "$TARGET_GROUP" == "" ]; then
           aws ecs create-service \
             --cluster ${{ inputs.cluster }} \
             --service-name ${{ inputs.service }} \
-            --task-definition ${{ steps.task-def.outputs.task-definition }} \
+            --task-definition $TASK_DEF_ARN \
             --desired-count ${{ inputs.desired_count }} \
             --launch-type ${{ inputs.launch_type }} \
             --network-configuration "awsvpcConfiguration={subnets=$SUBNETS,securityGroups=$SECURITY_GROUPS,assignPublicIp=DISABLED}"
@@ -142,7 +145,7 @@ runs:
           aws ecs create-service \
             --cluster ${{ inputs.cluster }} \
             --service-name ${{ inputs.service }} \
-            --task-definition ${{ steps.task-def.outputs.task-definition }} \
+            --task-definition $TASK_DEF_ARN \
             --desired-count ${{ inputs.desired_count }} \
             --launch-type ${{ inputs.launch_type }} \
             --network-configuration "awsvpcConfiguration={subnets=$SUBNETS,securityGroups=$SECURITY_GROUPS,assignPublicIp=DISABLED}" \
