@@ -92,9 +92,9 @@ runs:
       shell: bash
       run: |
         # Fetch Subnets and Security Groups from SSM
-        SUBNET_A=$(aws ssm get-parameter --name /SUBNET_A --query Parameter.Value --output text)
-        SUBNET_B=$(aws ssm get-parameter --name /SUBNET_B --query Parameter.Value --output text)
-        SUBNET_C=$(aws ssm get-parameter --name /SUBNET_C --query Parameter.Value --output text)
+        SUBNET_A=$(aws ssm get-parameter --name /${{ inputs.region }}/SUBNET_A --query Parameter.Value --output text)
+        SUBNET_B=$(aws ssm get-parameter --name /${{ inputs.region }}/SUBNET_B --query Parameter.Value --output text)
+        SUBNET_C=$(aws ssm get-parameter --name /${{ inputs.region }}/SUBNET_C --query Parameter.Value --output text)
         echo "subnets=[$SUBNET_A,$SUBNET_B,$SUBNET_C]" >> $GITHUB_OUTPUT
 
         SECURITY_GROUP=$(aws ssm get-parameter --name /${{ inputs.environment }}/${{ inputs.container-name }}/SECURITY_GROUP --query Parameter.Value --output text)
