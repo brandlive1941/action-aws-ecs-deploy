@@ -50,6 +50,10 @@ inputs:
   target_group:
     description: 'The target group ARN to use for the service, used only when creating a new service'
     required: false
+  enable_execute_command:
+    description: 'Enable ECS Exec (aws ecs execute-command) on the service, used only when creating a new service'
+    required: false
+    default: 'false'
   environment:
     description: 'The environment name (e.g., sandbox, dev, qa)'
     required: false # Making false to not break existing calls, but needed for fetching config
@@ -100,8 +104,19 @@ runs:
         SECURITY_GROUP=$(aws ssm get-parameter --name /${{ inputs.environment }}/${{ inputs.container-name }}/SECURITY_GROUP --query Parameter.Value --output text)
         echo "security_groups=[$SECURITY_GROUP]" >> $GITHUB_OUTPUT
 
-        # Fetch Target Group ARN from SSM
-        TG_ARN=$(aws ssm get-parameter --name /${{ inputs.environment }}/${{ inputs.container-name }}/TG_ARN --query Parameter.Value --output text)
+        # Fetch Target Group ARN from SSM.
+        #
+        # A headless worker -- a queue or stream consumer with no load balancer --
+        # has no TG_ARN parameter, and this step runs under `set -e`, so an
+        # unguarded lookup aborted the whole action before create_service could
+        # run. That is why the branch below already tests for an empty
+        # TARGET_GROUP: the no-load-balancer path was always intended, it was
+        # just unreachable.
+        #
+        # ParameterNotFound is therefore treated as "this service has no target
+        # group", not as an error. A genuine permissions failure still surfaces,
+        # because create-service then fails on the missing network config.
+        TG_ARN=$(aws ssm get-parameter --name /${{ inputs.environment }}/${{ inputs.container-name }}/TG_ARN --query Parameter.Value --output text 2>/dev/null || echo "")
         echo "target_group=$TG_ARN" >> $GITHUB_OUTPUT
 
         # Extract Container Port
@@ -128,6 +143,19 @@ runs:
         if [ -z "$SECURITY_GROUPS" ]; then SECURITY_GROUPS="${{ inputs.security_groups }}"; fi
         if [ -z "$TARGET_GROUP" ]; then TARGET_GROUP="${{ inputs.target_group }}"; fi
 
+        # ECS Exec is a SERVICE setting, not a task-definition one, so it can only
+        # be set here at creation. The update path below uses
+        # amazon-ecs-deploy-task-definition, which has no input for it and never
+        # touches it -- which is the point: the flag persists for the life of the
+        # service, so setting it once at creation is enough. Flipping it on an
+        # existing service forces a new deployment, so it is deliberately not
+        # done on every deploy.
+        EXEC_FLAG=""
+        if [ "${{ inputs.enable_execute_command }}" = "true" ]; then
+          EXEC_FLAG="--enable-execute-command"
+          echo "ECS Exec will be enabled on this service."
+        fi
+
         # Register the task definition to get an ARN
         echo "Registering task definition..."
         TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json "file://${{ steps.task-def.outputs.task-definition }}" --query 'taskDefinition.taskDefinitionArn' --output text)
@@ -140,6 +168,7 @@ runs:
             --task-definition $TASK_DEF_ARN \
             --desired-count ${{ inputs.desired_count }} \
             --launch-type ${{ inputs.launch_type }} \
+            $EXEC_FLAG \
             --network-configuration "awsvpcConfiguration={subnets=$SUBNETS,securityGroups=$SECURITY_GROUPS,assignPublicIp=DISABLED}"
         else
           aws ecs create-service \
@@ -148,6 +177,7 @@ runs:
             --task-definition $TASK_DEF_ARN \
             --desired-count ${{ inputs.desired_count }} \
             --launch-type ${{ inputs.launch_type }} \
+            $EXEC_FLAG \
             --network-configuration "awsvpcConfiguration={subnets=$SUBNETS,securityGroups=$SECURITY_GROUPS,assignPublicIp=DISABLED}" \
             --load-balancers "targetGroupArn=$TARGET_GROUP,containerName=${{ inputs.container-name }},containerPort=$CONTAINER_PORT"
         fi
