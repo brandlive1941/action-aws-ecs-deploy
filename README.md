@@ -58,6 +58,7 @@ When `create_service` is set to `true`, the action will attempt to fetch subnets
 | `subnets` | Fallback subnets to use for the service (if SSM fetch fails) | No | `[]` |
 | `security_groups` | Fallback security groups to use for the service (if SSM fetch fails) | No | `[]` |
 | `target_group` | Fallback target group ARN to use for the service (if SSM fetch fails) | No | - |
+| `enable_execute_command` | Enable ECS Exec (`aws ecs execute-command`) on the service (used only when creating) | No | `false` |
 
 ## Automatic Configuration Retrieval
 
@@ -68,6 +69,29 @@ When `create_service: true` and `environment` is provided, the action fetches th
 - Target Group ARN: `/${environment}/${container-name}/TG_ARN`
 
 If these parameters do not exist, it will fall back to the provided `subnets`, `security_groups`, and `target_group` inputs.
+
+`TG_ARN` is optional. A service with no target group parameter and no
+`target_group` input is created **without a load balancer**, which is what a
+headless worker -- a queue or stream consumer -- needs. `SUBNET_*` and
+`SECURITY_GROUP` are still required.
+
+## ECS Exec
+
+`enable_execute_command: true` creates the service with ECS Exec enabled, so
+`aws ecs execute-command` can open a shell in a running task.
+
+It applies **only when the service is created**. Enabling it on an existing
+service forces a new deployment, so the action does not set it on every deploy;
+the flag persists for the life of the service, which is why setting it once at
+creation is enough.
+
+Two things are needed alongside it, and neither is set by this action:
+
+- `ssmmessages:CreateControlChannel`, `CreateDataChannel`, `OpenControlChannel`
+  and `OpenDataChannel` on the **task role** (not the execution role -- the
+  session runs as the application's identity)
+- `linuxParameters.initProcessEnabled: true` in the task definition, so
+  sessions reap cleanly
 
 ## License
 
