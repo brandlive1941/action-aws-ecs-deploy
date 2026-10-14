@@ -51,9 +51,13 @@ inputs:
     description: 'The target group ARN to use for the service, used only when creating a new service'
     required: false
   enable_execute_command:
-    description: 'Enable ECS Exec (aws ecs execute-command) on the service, used only when creating a new service'
+    description: >-
+      ECS Exec (aws ecs execute-command) on the service. 'true' ensures it is on,
+      'false' ensures it is off, and leaving it unset leaves the service alone.
+      Unset rather than 'false' is the default on purpose: a caller that simply
+      omits the input must not silently turn exec OFF on a service that has it.
     required: false
-    default: 'false'
+    default: ''
   environment:
     description: 'The environment name (e.g., sandbox, dev, qa)'
     required: false # Making false to not break existing calls, but needed for fetching config
@@ -143,13 +147,12 @@ runs:
         if [ -z "$SECURITY_GROUPS" ]; then SECURITY_GROUPS="${{ inputs.security_groups }}"; fi
         if [ -z "$TARGET_GROUP" ]; then TARGET_GROUP="${{ inputs.target_group }}"; fi
 
-        # ECS Exec is a SERVICE setting, not a task-definition one, so it can only
-        # be set here at creation. The update path below uses
+        # ECS Exec is a SERVICE setting, not a task-definition one. Set it here
+        # for services this action CREATES. Services that already exist are
+        # converged by the reconcile step below, because the update path uses
         # amazon-ecs-deploy-task-definition, which has no input for it and never
-        # touches it -- which is the point: the flag persists for the life of the
-        # service, so setting it once at creation is enough. Flipping it on an
-        # existing service forces a new deployment, so it is deliberately not
-        # done on every deploy.
+        # touches it -- so passing enable_execute_command would otherwise be
+        # silently ignored on every service this action did not create.
         EXEC_FLAG=""
         if [ "${{ inputs.enable_execute_command }}" = "true" ]; then
           EXEC_FLAG="--enable-execute-command"
@@ -181,6 +184,61 @@ runs:
             --network-configuration "awsvpcConfiguration={subnets=$SUBNETS,securityGroups=$SECURITY_GROUPS,assignPublicIp=DISABLED}" \
             --load-balancers "targetGroupArn=$TARGET_GROUP,containerName=${{ inputs.container-name }},containerPort=$CONTAINER_PORT"
         fi
+
+    # Converge ECS Exec on services that already exist.
+    #
+    # Only acts when the setting is actually wrong, because enabling it forces a
+    # new deployment -- an unconditional update-service would redeploy every
+    # service on every run. Checking first makes this a no-op after the first
+    # time.
+    #
+    # ECS Exec needs three things and this is only the third: ssmmessages:* on the
+    # TASK role (not the execution role), linuxParameters.initProcessEnabled in
+    # the container definition, and this flag. Missing any one fails at exec time
+    # with the same unhelpful message.
+    - name: Reconcile ECS Exec on an existing service
+      if: inputs.enable_execute_command != ''
+      shell: bash
+      run: |
+        DESIRED="${{ inputs.enable_execute_command }}"
+        CURRENT=$(aws ecs describe-services \
+          --cluster ${{ inputs.cluster }} \
+          --services ${{ inputs.service }} \
+          --query 'services[0].enableExecuteCommand' --output text 2>/dev/null || echo "NONE")
+
+        # NONE means the service does not exist yet -- create_service above owns
+        # that case, so there is nothing to converge.
+        if [ "$CURRENT" = "NONE" ]; then
+          echo "Service not found; creation path owns the initial setting."
+          exit 0
+        fi
+
+        # describe-services returns True/False; normalise for comparison.
+        case "$CURRENT" in True|true) CURRENT=true ;; *) CURRENT=false ;; esac
+
+        if [ "$CURRENT" = "$DESIRED" ]; then
+          echo "ECS Exec already $DESIRED on ${{ inputs.service }}; nothing to do."
+          exit 0
+        fi
+
+        # Only reached when the setting is genuinely wrong. Either direction
+        # forces a new deployment, because the exec agent is injected at task
+        # start -- running tasks cannot gain or lose it in place.
+        if [ "$DESIRED" = "true" ]; then
+          echo "Enabling ECS Exec on ${{ inputs.service }}."
+          FLAG="--enable-execute-command"
+        else
+          echo "Disabling ECS Exec on ${{ inputs.service }}."
+          # NOT --no-enable-execute-command: the CLI pairs these as
+          # [--enable-execute-command | --disable-execute-command] and rejects
+          # the --no- form with a usage error.
+          FLAG="--disable-execute-command"
+        fi
+
+        aws ecs update-service \
+          --cluster ${{ inputs.cluster }} \
+          --service ${{ inputs.service }} \
+          $FLAG >/dev/null
 
     - id: deploy
       uses: aws-actions/amazon-ecs-deploy-task-definition@v2
