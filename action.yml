@@ -108,18 +108,9 @@ runs:
         SECURITY_GROUP=$(aws ssm get-parameter --name /${{ inputs.environment }}/${{ inputs.container-name }}/SECURITY_GROUP --query Parameter.Value --output text)
         echo "security_groups=[$SECURITY_GROUP]" >> $GITHUB_OUTPUT
 
-        # Fetch Target Group ARN from SSM.
-        #
-        # A headless worker -- a queue or stream consumer with no load balancer --
-        # has no TG_ARN parameter, and this step runs under `set -e`, so an
-        # unguarded lookup aborted the whole action before create_service could
-        # run. That is why the branch below already tests for an empty
-        # TARGET_GROUP: the no-load-balancer path was always intended, it was
-        # just unreachable.
-        #
-        # ParameterNotFound is therefore treated as "this service has no target
-        # group", not as an error. A genuine permissions failure still surfaces,
-        # because create-service then fails on the missing network config.
+        # A headless worker has no TG_ARN parameter, and `set -e` would abort the
+        # action before create_service runs. ParameterNotFound means "no target
+        # group", not an error -- create-service still fails on bad network config.
         TG_ARN=$(aws ssm get-parameter --name /${{ inputs.environment }}/${{ inputs.container-name }}/TG_ARN --query Parameter.Value --output text 2>/dev/null || echo "")
         echo "target_group=$TG_ARN" >> $GITHUB_OUTPUT
 
@@ -147,12 +138,9 @@ runs:
         if [ -z "$SECURITY_GROUPS" ]; then SECURITY_GROUPS="${{ inputs.security_groups }}"; fi
         if [ -z "$TARGET_GROUP" ]; then TARGET_GROUP="${{ inputs.target_group }}"; fi
 
-        # ECS Exec is a SERVICE setting, not a task-definition one. Set it here
-        # for services this action CREATES. Services that already exist are
-        # converged by the reconcile step below, because the update path uses
-        # amazon-ecs-deploy-task-definition, which has no input for it and never
-        # touches it -- so passing enable_execute_command would otherwise be
-        # silently ignored on every service this action did not create.
+        # ECS Exec is a SERVICE setting, not a task-definition one. Applies only to
+        # services this action CREATES; existing ones are handled by the reconcile
+        # step, since amazon-ecs-deploy-task-definition has no input for it.
         EXEC_FLAG=""
         if [ "${{ inputs.enable_execute_command }}" = "true" ]; then
           EXEC_FLAG="--enable-execute-command"
@@ -185,17 +173,9 @@ runs:
             --load-balancers "targetGroupArn=$TARGET_GROUP,containerName=${{ inputs.container-name }},containerPort=$CONTAINER_PORT"
         fi
 
-    # Converge ECS Exec on services that already exist.
-    #
-    # Only acts when the setting is actually wrong, because enabling it forces a
-    # new deployment -- an unconditional update-service would redeploy every
-    # service on every run. Checking first makes this a no-op after the first
-    # time.
-    #
-    # ECS Exec needs three things and this is only the third: ssmmessages:* on the
-    # TASK role (not the execution role), linuxParameters.initProcessEnabled in
-    # the container definition, and this flag. Missing any one fails at exec time
-    # with the same unhelpful message.
+    # Only acts when the setting is wrong -- enabling it forces a redeployment.
+    # ECS Exec also needs ssmmessages:* on the TASK role and
+    # linuxParameters.initProcessEnabled; missing either fails at exec time.
     - name: Reconcile ECS Exec on an existing service
       if: inputs.enable_execute_command != ''
       shell: bash
